@@ -137,8 +137,14 @@ from tiktoken import Encoding
 encoding = tiktoken.get_encoding("cl100k_base")
 from importlib import resources
 
-with resources.open_text("litellm.llms.tokenizers", "anthropic_tokenizer.json") as f:
-    json_data = json.load(f)
+try:
+    with resources.open_text("litellm.llms.tokenizers", "anthropic_tokenizer.json") as f:
+        json_data = json.load(f)
+    # Convert to str (if necessary)
+    claude_json_str = json.dumps(json_data)
+except:
+    claude_json_str=""
+
 # Convert to str (if necessary)
 claude_json_str = json.dumps(json_data)
 import importlib.metadata
