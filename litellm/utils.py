@@ -145,8 +145,6 @@ try:
 except:
     claude_json_str=""
 
-# Convert to str (if necessary)
-claude_json_str = json.dumps(json_data)
 import importlib.metadata
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
