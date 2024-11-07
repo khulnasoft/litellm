@@ -7,6 +7,7 @@ import os
 import threading
 import traceback
 import uuid
+from datetime import datetime
 from typing import Literal, Optional
 
 import dotenv
@@ -16,10 +17,17 @@ from pydantic import BaseModel
 import litellm
 from litellm import verbose_logger
 from litellm.integrations.custom_logger import CustomLogger
-from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler, HTTPHandler
+from litellm.llms.custom_httpx.http_handler import (
+    AsyncHTTPHandler,
+    HTTPHandler,
+    get_async_httpx_client,
+    httpxSpecialProvider,
+)
 from litellm.utils import get_formatted_prompt
 
-global_braintrust_http_handler = AsyncHTTPHandler()
+global_braintrust_http_handler = get_async_httpx_client(
+    llm_provider=httpxSpecialProvider.LoggingCallback
+)
 global_braintrust_sync_http_handler = HTTPHandler()
 API_BASE = "https://api.braintrustdata.com/v1"
 
@@ -117,7 +125,9 @@ class BraintrustLogger(CustomLogger):
 
         self.default_project_id = project_dict["id"]
 
-    def log_success_event(self, kwargs, response_obj, start_time, end_time):
+    def log_success_event(  # noqa: PLR0915
+        self, kwargs, response_obj, start_time, end_time
+    ):
         verbose_logger.debug("REACHES BRAINTRUST SUCCESS")
         try:
             litellm_call_id = kwargs.get("litellm_call_id")
@@ -128,27 +138,23 @@ class BraintrustLogger(CustomLogger):
                 project_id = self.default_project_id
 
             prompt = {"messages": kwargs.get("messages")}
-
+            output = None
             if response_obj is not None and (
                 kwargs.get("call_type", None) == "embedding"
                 or isinstance(response_obj, litellm.EmbeddingResponse)
             ):
-                input = prompt
                 output = None
             elif response_obj is not None and isinstance(
                 response_obj, litellm.ModelResponse
             ):
-                input = prompt
                 output = response_obj["choices"][0]["message"].json()
             elif response_obj is not None and isinstance(
                 response_obj, litellm.TextCompletionResponse
             ):
-                input = prompt
                 output = response_obj.choices[0].text
             elif response_obj is not None and isinstance(
                 response_obj, litellm.ImageResponse
             ):
-                input = prompt
                 output = response_obj["data"]
 
             litellm_params = kwargs.get("litellm_params", {})
@@ -161,7 +167,7 @@ class BraintrustLogger(CustomLogger):
                 metadata = copy.deepcopy(
                     metadata
                 )  # Avoid modifying the original metadata
-            except:
+            except Exception:
                 new_metadata = {}
                 for key, value in metadata.items():
                     if (
@@ -180,9 +186,9 @@ class BraintrustLogger(CustomLogger):
 
                     # generate langfuse tags - Default Tags sent to Langfuse from LiteLLM Proxy
                     if (
-                        litellm._langfuse_default_tags is not None
-                        and isinstance(litellm._langfuse_default_tags, list)
-                        and key in litellm._langfuse_default_tags
+                        litellm.langfuse_default_tags is not None
+                        and isinstance(litellm.langfuse_default_tags, list)
+                        and key in litellm.langfuse_default_tags
                     ):
                         tags.append(f"{key}:{value}")
 
@@ -202,16 +208,13 @@ class BraintrustLogger(CustomLogger):
                 clean_metadata["litellm_response_cost"] = cost
 
             metrics: Optional[dict] = None
-            if (
-                response_obj is not None
-                and hasattr(response_obj, "usage")
-                and isinstance(response_obj.usage, litellm.Usage)
-            ):
-                generation_id = litellm.utils.get_logging_id(start_time, response_obj)
+            usage_obj = getattr(response_obj, "usage", None)
+            if usage_obj and isinstance(usage_obj, litellm.Usage):
+                litellm.utils.get_logging_id(start_time, response_obj)
                 metrics = {
-                    "prompt_tokens": response_obj.usage.prompt_tokens,
-                    "completion_tokens": response_obj.usage.completion_tokens,
-                    "total_tokens": response_obj.usage.total_tokens,
+                    "prompt_tokens": usage_obj.prompt_tokens,
+                    "completion_tokens": usage_obj.completion_tokens,
+                    "total_tokens": usage_obj.total_tokens,
                     "total_cost": cost,
                 }
 
@@ -234,14 +237,11 @@ class BraintrustLogger(CustomLogger):
             except httpx.HTTPStatusError as e:
                 raise Exception(e.response.text)
         except Exception as e:
-            verbose_logger.error(
-                "Error logging to braintrust - Exception received - {}\n{}".format(
-                    str(e), traceback.format_exc()
-                )
-            )
-            raise e
+            raise e  # don't use verbose_logger.exception, if exception is raised
 
-    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+    async def async_log_success_event(  # noqa: PLR0915
+        self, kwargs, response_obj, start_time, end_time
+    ):
         verbose_logger.debug("REACHES BRAINTRUST SUCCESS")
         try:
             litellm_call_id = kwargs.get("litellm_call_id")
@@ -252,27 +252,23 @@ class BraintrustLogger(CustomLogger):
                 project_id = self.default_project_id
 
             prompt = {"messages": kwargs.get("messages")}
-
+            output = None
             if response_obj is not None and (
                 kwargs.get("call_type", None) == "embedding"
                 or isinstance(response_obj, litellm.EmbeddingResponse)
             ):
-                input = prompt
                 output = None
             elif response_obj is not None and isinstance(
                 response_obj, litellm.ModelResponse
             ):
-                input = prompt
                 output = response_obj["choices"][0]["message"].json()
             elif response_obj is not None and isinstance(
                 response_obj, litellm.TextCompletionResponse
             ):
-                input = prompt
                 output = response_obj.choices[0].text
             elif response_obj is not None and isinstance(
                 response_obj, litellm.ImageResponse
             ):
-                input = prompt
                 output = response_obj["data"]
 
             litellm_params = kwargs.get("litellm_params", {})
@@ -285,7 +281,6 @@ class BraintrustLogger(CustomLogger):
             for key, value in metadata.items():
                 if (
                     isinstance(value, list)
-                    or isinstance(value, dict)
                     or isinstance(value, str)
                     or isinstance(value, int)
                     or isinstance(value, float)
@@ -293,6 +288,11 @@ class BraintrustLogger(CustomLogger):
                     new_metadata[key] = value
                 elif isinstance(value, BaseModel):
                     new_metadata[key] = value.model_dump_json()
+                elif isinstance(value, dict):
+                    for k, v in value.items():
+                        if isinstance(v, datetime):
+                            value[k] = v.isoformat()
+                    new_metadata[key] = value
 
             metadata = new_metadata
 
@@ -302,9 +302,9 @@ class BraintrustLogger(CustomLogger):
 
                     # generate langfuse tags - Default Tags sent to Langfuse from LiteLLM Proxy
                     if (
-                        litellm._langfuse_default_tags is not None
-                        and isinstance(litellm._langfuse_default_tags, list)
-                        and key in litellm._langfuse_default_tags
+                        litellm.langfuse_default_tags is not None
+                        and isinstance(litellm.langfuse_default_tags, list)
+                        and key in litellm.langfuse_default_tags
                     ):
                         tags.append(f"{key}:{value}")
 
@@ -324,16 +324,13 @@ class BraintrustLogger(CustomLogger):
                 clean_metadata["litellm_response_cost"] = cost
 
             metrics: Optional[dict] = None
-            if (
-                response_obj is not None
-                and hasattr(response_obj, "usage")
-                and isinstance(response_obj.usage, litellm.Usage)
-            ):
-                generation_id = litellm.utils.get_logging_id(start_time, response_obj)
+            usage_obj = getattr(response_obj, "usage", None)
+            if usage_obj and isinstance(usage_obj, litellm.Usage):
+                litellm.utils.get_logging_id(start_time, response_obj)
                 metrics = {
-                    "prompt_tokens": response_obj.usage.prompt_tokens,
-                    "completion_tokens": response_obj.usage.completion_tokens,
-                    "total_tokens": response_obj.usage.total_tokens,
+                    "prompt_tokens": usage_obj.prompt_tokens,
+                    "completion_tokens": usage_obj.completion_tokens,
+                    "total_tokens": usage_obj.total_tokens,
                     "total_cost": cost,
                 }
 
@@ -357,12 +354,7 @@ class BraintrustLogger(CustomLogger):
             except httpx.HTTPStatusError as e:
                 raise Exception(e.response.text)
         except Exception as e:
-            verbose_logger.error(
-                "Error logging to braintrust - Exception received - {}\n{}".format(
-                    str(e), traceback.format_exc()
-                )
-            )
-            raise e
+            raise e  # don't use verbose_logger.exception, if exception is raised
 
     def log_failure_event(self, kwargs, response_obj, start_time, end_time):
         return super().log_failure_event(kwargs, response_obj, start_time, end_time)

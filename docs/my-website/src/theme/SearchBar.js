@@ -1,37 +1,37 @@
 import React from "react";
 import SearchBar from "@theme-original/SearchBar";
 
-import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
-import { usePluginData } from "@docusaurus/useGlobalData";
-
 export default function SearchBarWrapper(props) {
-  const { siteConfig } = useDocusaurusContext();
-  const { options } = usePluginData("docusaurus-plugin-pagefind-canary");
-
-  const [path, setPath] = React.useState("");
   const [loaded, setLoaded] = React.useState(false);
-
-  React.useEffect(() => {
-    setPath(`${siteConfig.baseUrl}pagefind/pagefind.js`);
-  }, [siteConfig]);
 
   React.useEffect(() => {
     Promise.all([
       import("@getcanary/web/components/canary-root"),
-      import("@getcanary/web/components/canary-provider-pagefind"),
+      import("@getcanary/web/components/canary-provider-cloud"),
       import("@getcanary/web/components/canary-modal"),
       import("@getcanary/web/components/canary-trigger-logo"),
+      import("@getcanary/web/components/canary-input"),
       import("@getcanary/web/components/canary-content"),
       import("@getcanary/web/components/canary-search"),
-      import("@getcanary/web/components/canary-search-input"),
-      import("@getcanary/web/components/canary-search-results-group"),
-      import("@getcanary/web/components/canary-footer"),
-      import("@getcanary/web/components/canary-callout-calendly"),
-      import("@getcanary/web/components/canary-callout-discord"),
+      import("@getcanary/web/components/canary-search-results"),
+      import("@getcanary/web/components/canary-search-match-github-issue"),
+      import("@getcanary/web/components/canary-search-match-github-discussion"),
+      import("@getcanary/web/components/canary-filter-tabs-glob.js"),
+      import("@getcanary/web/components/canary-filter-tags.js"),
+      import("@getcanary/web/components/canary-footer.js"),
     ])
       .then(() => setLoaded(true))
       .catch(console.error);
   }, []);
+
+  const PUBLIC_KEY = "cp1a506f13";
+
+  const TAGS = "All,Proxy";
+
+  const TABS = JSON.stringify([
+    { name: "Docs", pattern: "**/docs.litellm.ai/**" },
+    { name: "Github", pattern: "**/github.com/**" },
+  ]);
 
   return (
     <div
@@ -42,7 +42,7 @@ export default function SearchBarWrapper(props) {
         gap: "6px",
       }}
     >
-      {!loaded || !path ? (
+      {!loaded ? (
         <button
           style={{
             fontSize: "2rem",
@@ -57,35 +57,26 @@ export default function SearchBarWrapper(props) {
         </button>
       ) : (
         <canary-root framework="docusaurus">
-          <canary-provider-pagefind
-            options={JSON.stringify({ ...options, path })}
-          >
+          <canary-provider-cloud project-key={PUBLIC_KEY}>
             <canary-modal>
               <canary-trigger-logo slot="trigger"></canary-trigger-logo>
               <canary-content slot="content">
-                <canary-search slot="search">
-                  <canary-search-input slot="input"></canary-search-input>
-                  <canary-search-results-group
-                    slot="results"
-                    groups="SDK:*;Proxy:/docs/(simple_proxy|proxy/.*)"
-                  ></canary-search-results-group>
-                  <canary-callout-discord
-                    slot="callout"
-                    message="👋 Looking for help?"
-                    url="https://discord.com/invite/wuPM9dRgDw"
-                    keywords="discord,help,support,community"
-                  ></canary-callout-discord>
-                  <canary-callout-calendly
-                    slot="callout"
-                    message="🚅 Interested in enterprise features?"
-                    keywords="sso,enterprise,security,audit"
-                    url="https://calendly.com/d/4mp-gd3-k5k/litellm-1-1-onboarding-chat"
-                  ></canary-callout-calendly>
+                <canary-filter-tags
+                  slot="head"
+                  tags={TAGS}
+                ></canary-filter-tags>
+                <canary-input slot="input" autofocus></canary-input>
+                <canary-search slot="mode">
+                  <canary-filter-tabs-glob
+                    slot="head"
+                    tabs={TABS}
+                  ></canary-filter-tabs-glob>
+                  <canary-search-results slot="body"></canary-search-results>
                 </canary-search>
                 <canary-footer slot="footer"></canary-footer>
               </canary-content>
             </canary-modal>
-          </canary-provider-pagefind>
+          </canary-provider-cloud>
         </canary-root>
       )}
 

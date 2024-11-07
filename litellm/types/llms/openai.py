@@ -1,16 +1,5 @@
 from os import PathLike
-from typing import (
-    IO,
-    Any,
-    BinaryIO,
-    Iterable,
-    List,
-    Literal,
-    Mapping,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import IO, Any, Iterable, List, Literal, Mapping, Optional, Tuple, Union
 
 from openai._legacy_response import HttpxBinaryResponseContent
 from openai.lib.streaming._assistants import (
@@ -20,7 +9,7 @@ from openai.lib.streaming._assistants import (
     AsyncAssistantStreamManager,
 )
 from openai.pagination import AsyncCursorPage, SyncCursorPage
-from openai.types import Batch, FileObject
+from openai.types import Batch, EmbeddingCreateParams, FileObject
 from openai.types.beta.assistant import Assistant
 from openai.types.beta.assistant_tool_param import AssistantToolParam
 from openai.types.beta.thread_create_params import (
@@ -29,6 +18,10 @@ from openai.types.beta.thread_create_params import (
 from openai.types.beta.threads.message import Message as OpenAIMessage
 from openai.types.beta.threads.message_content import MessageContent
 from openai.types.beta.threads.run import Run
+from openai.types.chat import ChatCompletionChunk
+from openai.types.chat.chat_completion_audio_param import ChatCompletionAudioParam
+from openai.types.chat.chat_completion_modality import ChatCompletionModality
+from openai.types.embedding import Embedding as OpenAIEmbedding
 from pydantic import BaseModel, Field
 from typing_extensions import Dict, Required, TypedDict, override
 
@@ -44,6 +37,9 @@ FileTypes = Union[
     # (filename, file (or bytes), content_type, headers)
     Tuple[Optional[str], FileContent, Optional[str], Mapping[str, str]],
 ]
+
+
+EmbeddingInput = Union[str, List[str]]
 
 
 class NotGiven:
@@ -299,6 +295,13 @@ class ListBatchRequest(TypedDict, total=False):
     timeout: Optional[float]
 
 
+class ChatCompletionAudioDelta(TypedDict, total=False):
+    data: str
+    transcript: str
+    expires_at: int
+    id: str
+
+
 class ChatCompletionToolCallFunctionChunk(TypedDict, total=False):
     name: Optional[str]
     arguments: str
@@ -324,9 +327,19 @@ class ChatCompletionDeltaToolCallChunk(TypedDict, total=False):
     index: int
 
 
-class ChatCompletionTextObject(TypedDict):
+class ChatCompletionCachedContent(TypedDict):
+    type: Literal["ephemeral"]
+
+
+class OpenAIChatCompletionTextObject(TypedDict):
     type: Literal["text"]
     text: str
+
+
+class ChatCompletionTextObject(
+    OpenAIChatCompletionTextObject, total=False
+):  # litellm wrapper on top of openai object for handling cached content
+    cache_control: ChatCompletionCachedContent
 
 
 class ChatCompletionImageUrlObject(TypedDict, total=False):
@@ -336,33 +349,64 @@ class ChatCompletionImageUrlObject(TypedDict, total=False):
 
 class ChatCompletionImageObject(TypedDict):
     type: Literal["image_url"]
-    image_url: ChatCompletionImageUrlObject
+    image_url: Union[str, ChatCompletionImageUrlObject]
 
 
-class ChatCompletionUserMessage(TypedDict):
+OpenAIMessageContent = Union[
+    str, Iterable[Union[ChatCompletionTextObject, ChatCompletionImageObject]]
+]
+
+# The prompt(s) to generate completions for, encoded as a string, array of strings, array of tokens, or array of token arrays.
+AllPromptValues = Union[str, List[str], Iterable[int], Iterable[Iterable[int]], None]
+
+
+class OpenAIChatCompletionUserMessage(TypedDict):
     role: Literal["user"]
-    content: Union[
-        str, Iterable[Union[ChatCompletionTextObject, ChatCompletionImageObject]]
-    ]
+    content: OpenAIMessageContent
 
 
-class ChatCompletionAssistantMessage(TypedDict, total=False):
+class OpenAITextCompletionUserMessage(TypedDict):
+    role: Literal["user"]
+    content: AllPromptValues
+
+
+class ChatCompletionUserMessage(OpenAIChatCompletionUserMessage, total=False):
+    cache_control: ChatCompletionCachedContent
+
+
+class OpenAIChatCompletionAssistantMessage(TypedDict, total=False):
     role: Required[Literal["assistant"]]
-    content: Optional[str]
-    name: str
-    tool_calls: List[ChatCompletionAssistantToolCall]
+    content: Optional[Union[str, Iterable[ChatCompletionTextObject]]]
+    name: Optional[str]
+    tool_calls: Optional[List[ChatCompletionAssistantToolCall]]
+    function_call: Optional[ChatCompletionToolCallFunctionChunk]
+
+
+class ChatCompletionAssistantMessage(OpenAIChatCompletionAssistantMessage, total=False):
+    cache_control: ChatCompletionCachedContent
 
 
 class ChatCompletionToolMessage(TypedDict):
     role: Literal["tool"]
-    content: str
+    content: Union[str, Iterable[ChatCompletionTextObject]]
     tool_call_id: str
 
 
-class ChatCompletionSystemMessage(TypedDict, total=False):
-    role: Required[Literal["system"]]
-    content: Required[str]
+class ChatCompletionFunctionMessage(TypedDict):
+    role: Literal["function"]
+    content: Optional[Union[str, Iterable[ChatCompletionTextObject]]]
     name: str
+    tool_call_id: Optional[str]
+
+
+class OpenAIChatCompletionSystemMessage(TypedDict, total=False):
+    role: Required[Literal["system"]]
+    content: Required[Union[str, List]]
+    name: str
+
+
+class ChatCompletionSystemMessage(OpenAIChatCompletionSystemMessage, total=False):
+    cache_control: ChatCompletionCachedContent
 
 
 AllMessageValues = Union[
@@ -370,6 +414,7 @@ AllMessageValues = Union[
     ChatCompletionAssistantMessage,
     ChatCompletionToolMessage,
     ChatCompletionSystemMessage,
+    ChatCompletionFunctionMessage,
 ]
 
 
@@ -444,16 +489,29 @@ class ChatCompletionDeltaChunk(TypedDict, total=False):
     role: str
 
 
+ChatCompletionAssistantContentValue = (
+    str  # keep as var, used in stream_chunk_builder as well
+)
+
+
 class ChatCompletionResponseMessage(TypedDict, total=False):
-    content: Optional[str]
+    content: Optional[ChatCompletionAssistantContentValue]
     tool_calls: List[ChatCompletionToolCallChunk]
     role: Literal["assistant"]
+    function_call: ChatCompletionToolCallFunctionChunk
 
 
 class ChatCompletionUsageBlock(TypedDict):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+
+
+class OpenAIChatCompletionChunk(ChatCompletionChunk):
+    def __init__(self, **kwargs):
+        # Set the 'object' kwarg to 'chat.completion.chunk'
+        kwargs["object"] = "chat.completion.chunk"
+        super().__init__(**kwargs)
 
 
 class Hyperparameters(BaseModel):
